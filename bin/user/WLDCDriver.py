@@ -161,35 +161,29 @@ class WLDCDriverAPI():
 
     # Function for create URL for Weatherlink.com API v2 ---------------------------------------------------------------
 
-    def WLAPIv2(self, start_timestamp, end_timestamp):
+    def WLAPIv2(self, request_type, start_timestamp=None, end_timestamp=None):
 
         parameters = {
             "api-key": str(self.api_parameters['wl_apikey']),
             "api-secret": str(self.api_parameters['wl_apisecret']),
-            "end-timestamp": str(end_timestamp),
-            "start-timestamp": str(start_timestamp),
+            "end-timestamp": None if end_timestamp is None else str(end_timestamp),
+            "start-timestamp": None if start_timestamp is None else str(start_timestamp),
             "station-id": str(self.api_parameters['wl_stationid']),
             "t": int(time.time())
         }
 
+        data = "".join(k + str(parameters[k]) for k in sorted(parameters) if k != 'api-secret' and parameters[k] is not None)
         apiSecret = parameters["api-secret"]
-        parameters.pop("api-secret", None)
-
-        data = ""
-        for key in parameters:
-            data = data + key + str(parameters[key])
-
+        
         apiSignature = hmac.new(
             apiSecret.encode('utf-8'),
             data.encode('utf-8'),
             hashlib.sha256
         ).hexdigest()
-
-        url_wlapiv2 = "https://api.weatherlink.com/v2/historic/{}?api-key={}&t={}" \
-                      "&start-timestamp={}&end-timestamp={}&api-signature={}" \
-            .format(parameters["station-id"], parameters["api-key"], parameters["t"], parameters["start-timestamp"],
-                    parameters["end-timestamp"], apiSignature)
-
+        
+        url_suffix = "&".join("{}={}".format(k, v) for k, v in parameters.items() if k not in {'api-secret', 'station-id'} and v is not None) 
+        url_wlapiv2 = "https://api.weatherlink.com/v2/{}/{}?{}&api-signature={}".format(request_type, parameters["station-id"], url_suffix, apiSignature) 
+        
         return url_wlapiv2
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -231,7 +225,7 @@ class WLDCDriverAPI():
             else:
                 raise weewx.WeeWxIOError("Error while request HTTP [{}] Error is : {}".format(type_of_request, e))
 
-    def request_wl(self, start_timestamp, end_timestamp):
+    def request_wl_archive(self, start_timestamp, end_timestamp):
 
         # Function to request archive from Weatherlink.com
         index_start_timestamp = 0
@@ -255,23 +249,35 @@ class WLDCDriverAPI():
 
         if dict_timestamp != {}:
             for archive_interval in dict_timestamp:
-                url_apiv2_wl = self.WLAPIv2(archive_interval[index_start_timestamp],
+                url_apiv2_wl = self.WLAPIv2('historic',
+                                            archive_interval[index_start_timestamp],
                                             archive_interval[index_end_timestamp])
                 logdbg("URL API Weatherlink : {} ".format(url_apiv2_wl))
                 for data_wl in self.request_http_data(url_apiv2_wl,
                                                       self.api_parameters['time_out'], 'Weatherlink.com'):
-                    for _packet in self.data_decode_wl(data_wl, archive_interval[index_start_timestamp],
+                    for _packet in self.data_decode_range_wl(data_wl, archive_interval[index_start_timestamp],
                                                        archive_interval[index_end_timestamp]):
                         yield _packet
+
+
+    def request_wl_current(self):
+        url_apiv2_wl = self.WLAPIv2('current')
+        logdbg("URL API Weatherlink : {} ".format(url_apiv2_wl))
+        for data_wl in self.request_http_data(url_apiv2_wl,
+                                              self.api_parameters['time_out'], 'Weatherlink.com'):
+            for _packet in self.data_decode_single_wl(data_wl):
+                yield _packet
+
 
     def request_wl_health(self, start_timestamp, end_timestamp):
 
         # Function to request health archive from Weatherlink.com
-        url_apiv2_wl = self.WLAPIv2(start_timestamp, end_timestamp)
+        url_apiv2_wl = self.WLAPIv2('historic', start_timestamp, end_timestamp)
         logdbg("URL API Weatherlink : {} ".format(url_apiv2_wl))
         for data_wl in self.request_http_data(url_apiv2_wl, self.api_parameters['time_out'], 'HealthAPI'):
             for _packet in self.data_decode_wl_health(data_wl, end_timestamp):
                 yield _packet
+
 
     def request_wll(self, type_of_packet):
 
@@ -381,8 +387,90 @@ class WLDCDriverAPI():
     # ------------------------------------------------------------------------------------------------------------------
 
     # Functions to interpret json data to Weewx : ----------------------------------------------------------------------
+    
+    def data_decode_update_packet_wl(self, wl_packet, data_wl, timestamp=None):
+        logdbg("Request for timestamp : {}".format(timestamp))
+        ts_is_ok = lambda pk_sensor: (timestamp is None) or (pk_sensor.get('ts') == timestamp)
+        def wl_packet_set(pk_sensor, field, *fields):
+            for f in fields:
+                if f in pk_sensor:
+                    wl_packet[field] = pk_sensor[f]
+                    return
+        packet_timestamp = timestamp
+        for sensor in self.dict_device_id:
+            check_key = str(sensor)
+            for sensor_type_id in self.dict_sensor_type[sensor]:
+                for q in data_wl['sensors']:
+                    if q['sensor_type'] == sensor_type_id:
+                        for pk_sensor in q['data']:
+                            if pk_sensor['tx_id'] == self.dict_device_id[sensor] and ts_is_ok(pk_sensor):
+                                
+                                if sensor in self.list_iss:
+                                    wl_packet_set(pk_sensor, 'outTemp', 'temp_last', 'temp')
+                                    wl_packet_set(pk_sensor, 'outHumidity', 'hum_last', 'hum')
+                                    wl_packet_set(pk_sensor, 'rxCheckPercent', 'reception')
+                                    wl_packet_set(pk_sensor, 'dewpoint', 'dew_point_last', 'dew_point')
+                                    wl_packet_set(pk_sensor, 'heatindex', 'heat_index_last', 'heat_index')
+                                    wl_packet_set(pk_sensor, 'windchill', 'wind_chill_last', 'wind_chill')
+                                    wl_packet_set(pk_sensor, 'UV', 'uv_index_avg', 'uv_index')
+                                    wl_packet_set(pk_sensor, 'radiation', 'solar_rad_avg', 'solar_rad')
+                                    wl_packet_set(pk_sensor, 'rain', 'rainfall_in')
+                                    wl_packet_set(pk_sensor, 'rainRate', 'rain_rate_hi_in')
 
-    def data_decode_wl(self, data, start_timestamp, end_timestamp):
+                                if 'extraTemp' in check_key:
+                                    extraTemp[sensor] = pk_sensor.get('temp_last', pk_sensor.get('temp'))
+
+                                if 'extraHumid' in check_key:
+                                    extraHumid[sensor] = pk_sensor.get('hum_last', pk_sensor.get('hum'))
+
+                                if sensor in self.list_iss or sensor in self.list_anemometer:
+                                    wl_packet_set(pk_sensor, 'windSpeed', 'wind_speed_avg', 'wind_speed_avg_last_2_min')
+                                    wl_packet_set(pk_sensor, 'windDir', 'wind_dir_of_prevail', 'wind_dir_last')
+                                    wl_packet_set(pk_sensor, 'windGust', 'wind_speed_hi', 'wind_speed_hi_last_10_min')
+                                    wl_packet_set(pk_sensor, 'windGustDir', 'wind_speed_hi_dir', 'wind_dir_at_high_speed_last_10_min')
+                                    if timestamp is None and 'ts' in pk_sensor:
+                                        # if no timestamp, take it from the wind sensor
+                                        packet_timestamp = pk_sensor['ts']
+                                        
+                    if q['sensor_type'] == 242:
+                        for pk_sensor in q['data']:
+                            if ts_is_ok(pk_sensor):
+                                wl_packet_set(pk_sensor, 'barometer', 'bar_sea_level')
+                                wl_packet_set(pk_sensor, 'altimeter', 'bar_absolute')
+
+                    if q['sensor_type'] == 243:
+                        for pk_sensor in q['data']:
+                            if ts_is_ok(pk_sensor):
+                                wl_packet_set(pk_sensor, 'inTemp', 'temp_in_last', 'temp_in')
+                                wl_packet_set(pk_sensor, 'inHumidity', 'hum_in_last', 'hum_in')
+                                wl_packet_set(pk_sensor, 'inDewpoint', 'dew_point_in')
+
+                    if q['sensor_type'] == 504:
+                        for pk_sensor in q['data']:
+                            if ts_is_ok(pk_sensor):
+                                tmp_battery_voltage = pk_sensor['battery_voltage']
+                                if tmp_battery_voltage is not None:
+                                    tmp_battery_voltage = tmp_battery_voltage / 1000
+                                    wl_packet['consBatteryVoltage'] = tmp_battery_voltage
+
+                                tmp_input_voltage = pk_sensor['input_voltage']
+                                if tmp_input_voltage is not None:
+                                    tmp_input_voltage = tmp_input_voltage / 1000
+                                    wl_packet['supplyVoltage'] = tmp_input_voltage
+
+        wl_packet['dateTime'] = packet_timestamp
+
+        if len(self.dict_device_id) > 1:
+            if extraTemp is not None and extraTemp != {}:
+                wl_packet.update(extraTemp)
+
+            if extraHumid is not None and extraHumid != {}:
+                wl_packet.update(extraHumid)
+
+        return wl_packet
+        
+
+    def data_decode_range_wl(self, data, start_timestamp, end_timestamp):
 
         # Function to decode data from Weatherlink.com
         # Copy json data to new value
@@ -404,88 +492,50 @@ class WLDCDriverAPI():
 
         try:
             while start_timestamp <= end_timestamp:
-                logdbg("Request archive for timestamp : {}".format(start_timestamp))
-                for sensor in self.dict_device_id:
-                    check_key = str(sensor)
-                    for sensor_type_id in self.dict_sensor_type[sensor]:
-                        for q in data_wl['sensors']:
-                            if q['sensor_type'] == sensor_type_id:
-                                for pk_sensor in q['data']:
-                                    if pk_sensor['tx_id'] == self.dict_device_id[sensor] \
-                                            and pk_sensor['ts'] == start_timestamp:
-
-                                        if sensor in self.list_iss:
-                                            wl_packet['outTemp'] = pk_sensor['temp_last']
-                                            wl_packet['outHumidity'] = pk_sensor['hum_last']
-                                            wl_packet['rxCheckPercent'] = pk_sensor['reception']
-                                            wl_packet['dewpoint'] = pk_sensor['dew_point_last']
-                                            wl_packet['heatindex'] = pk_sensor['heat_index_last']
-                                            wl_packet['windchill'] = pk_sensor['wind_chill_last']
-                                            wl_packet['UV'] = pk_sensor['uv_index_avg']
-                                            wl_packet['radiation'] = pk_sensor['solar_rad_avg']
-                                            wl_packet['rain'] = pk_sensor['rainfall_in']
-                                            wl_packet['rainRate'] = pk_sensor['rain_rate_hi_in']
-
-                                        if 'extraTemp' in check_key:
-                                            extraTemp[sensor] = pk_sensor['temp_last']
-
-                                        if 'extraHumid' in check_key:
-                                            extraHumid[sensor] = pk_sensor['hum_last']
-
-                                        if sensor in self.list_iss or sensor in self.list_anemometer:
-                                            wl_packet['windSpeed'] = pk_sensor['wind_speed_avg']
-                                            wl_packet['windDir'] = pk_sensor['wind_dir_of_prevail']
-                                            wl_packet['windGust'] = pk_sensor['wind_speed_hi']
-                                            wl_packet['windGustDir'] = pk_sensor['wind_speed_hi_dir']
-
-                            if q['sensor_type'] == 242:
-                                for pk_sensor in q['data']:
-                                    if pk_sensor['ts'] == start_timestamp:
-                                        wl_packet['barometer'] = pk_sensor['bar_sea_level']
-                                        wl_packet['altimeter'] = pk_sensor['bar_absolute']
-
-                            if q['sensor_type'] == 243:
-                                for pk_sensor in q['data']:
-                                    if pk_sensor['ts'] == start_timestamp:
-                                        wl_packet['inTemp'] = pk_sensor['temp_in_last']
-                                        wl_packet['inHumidity'] = pk_sensor['hum_in_last']
-                                        wl_packet['inDewpoint'] = pk_sensor['dew_point_in']
-
-                            if q['sensor_type'] == 504:
-                                for pk_sensor in q['data']:
-                                    if pk_sensor['ts'] == start_timestamp:
-                                        tmp_battery_voltage = pk_sensor['battery_voltage']
-                                        if tmp_battery_voltage is not None:
-                                            tmp_battery_voltage = tmp_battery_voltage / 1000
-                                            wl_packet['consBatteryVoltage'] = tmp_battery_voltage
-
-                                        tmp_input_voltage = pk_sensor['input_voltage']
-                                        if tmp_input_voltage is not None:
-                                            tmp_input_voltage = tmp_input_voltage / 1000
-                                            wl_packet['supplyVoltage'] = tmp_input_voltage
-
-                wl_packet['dateTime'] = start_timestamp if start_timestamp is not None else None
-
-                if len(self.dict_device_id) > 1:
-                    if extraTemp is not None and extraTemp != {}:
-                        wl_packet.update(extraTemp)
-
-                    if extraHumid is not None and extraHumid != {}:
-                        wl_packet.update(extraHumid)
-
+                self.data_decode_update_packet_wl(wl_packet, data_wl, start_timestamp)
                 if wl_packet is not None and wl_packet['dateTime'] is not None:
                     logdbg("Weewx archive packet from Weatherlink.com : {}".format(wl_packet))
                     start_timestamp = int(start_timestamp + (60 * int(self.api_parameters['wl_archive_interval'])))
                     yield wl_packet
-
                 else:
                     logerr("No data in Weatherlink.com packet")
                     return
-
         except KeyError as e:
             raise weewx.WeeWxIOError('API Data from Weatherlink.com is invalid. Error is : {}'.format(e))
         except IndexError as e:
             raise weewx.WeeWxIOError('Structure type of Weatherlink.com is not valid. Error is : {}'.format(e))
+
+
+    def data_decode_single_wl(self, data, timestamp=None):
+
+        # Function to decode data from Weatherlink.com
+        # Copy json data to new value
+        data_wl = data
+
+        # Set dict
+        wl_packet = {'dateTime': None,
+                     'usUnits': weewx.US,
+                     'interval': self.api_parameters['wl_archive_interval'],
+                     }
+        extraTemp = {}
+        extraHumid = {}
+
+        # Set values to None
+        rainSize = None
+
+        try:
+            self.data_decode_update_packet_wl(wl_packet, data_wl, timestamp=timestamp)
+            if wl_packet is not None and wl_packet['dateTime'] is not None:
+                logdbg("Weewx packet from Weatherlink.com : {}".format(wl_packet))
+                yield wl_packet
+            else:
+                logerr("No data and/or data timestep in Weatherlink.com packet")
+                return
+        except KeyError as e:
+            raise weewx.WeeWxIOError('API Data from Weatherlink.com is invalid. Error is : {}'.format(e))
+        except IndexError as e:
+            raise weewx.WeeWxIOError('Structure type of Weatherlink.com is not valid. Error is : {}'.format(e))
+            
 
     def data_decode_wl_health(self, data, timestamp):
 
@@ -691,8 +741,8 @@ class WLDCDriver(weewx.drivers.AbstractDevice):
         # Setting require parameters to start WLDCDriver
         self.api_parameters = {'max_tries': int(stn_dict.get('max_tries', 5)),
                                'time_out': int(stn_dict.get('time_out', 10)),
-                               'retry_wait': int(stn_dict.get('retry_wait', 10)),
-                               'poll_interval': int(stn_dict.get('poll_interval', 5)),
+                               'retry_wait': int(stn_dict.get('retry_wait', 40)),
+                               'poll_interval': int(stn_dict.get('poll_interval', 30)),
                                'realtime_enable': int(stn_dict.get('realtime_enable', 0)),
                                'wind_gust_2min_enable': int(stn_dict.get('wind_gust_2min_enable', 0)),
                                'hostname': (stn_dict.get('hostname', None)),
@@ -768,7 +818,7 @@ class WLDCDriver(weewx.drivers.AbstractDevice):
                                                                    self.api_parameters['wl_archive_interval'])
                 # Add 60 seconds timestamp to wait the WLL archive new data
                 if good_stamp is not None and (good_stamp + 60 < now_timestamp_wl):
-                    for _packet_wl in self.WLDCDriverAPI.request_wl(good_stamp, now_timestamp_wl):
+                    for _packet_wl in self.WLDCDriverAPI.request_wl_archive(good_stamp, now_timestamp_wl):
                         yield _packet_wl
                         good_stamp = time.time() + 0.5
                         self.ntries = 1
@@ -779,8 +829,32 @@ class WLDCDriver(weewx.drivers.AbstractDevice):
                 logerr("Failed to get archive records from Weatherlink.com. Please retry later or restart Weewx")
         else:
             return
+            
 
     def genLoopPackets(self):
+
+        # Make loop packet specify by user by poll interval
+        while self.ntries < self.api_parameters['max_tries']:
+            try:
+                for _packet_wll in self.WLDCDriverAPI.request_wl_current():
+                    yield _packet_wll
+                    self.ntries = 1
+
+                if self.api_parameters['poll_interval']:
+                    time.sleep(self.api_parameters['poll_interval'])
+
+            except weewx.WeeWxIOError as e:
+                logerr("Failed attempt %d of %d to get loop data in genLoopPackets: %s" %
+                       (self.ntries, self.api_parameters['max_tries'], e))
+                self.ntries += 1
+                time.sleep(self.api_parameters['retry_wait'])
+        else:
+            msg = "Max retries (%d) exceeded for LOOP data" % self.api_parameters['max_tries']
+            logerr(msg)
+            raise weewx.RetriesExceeded(msg)
+
+
+    def genLoopPacketsOld(self):
 
         # Make loop packet specify by user by poll interval
         while self.ntries < self.api_parameters['max_tries']:
@@ -837,28 +911,57 @@ if __name__ == "__main__":
 
         import optparse
         parser = optparse.OptionParser(usage=usage)
-        parser.add_option('--test-driver', dest='td', action='store_true',
-                          help='test the driver')
+        parser.add_option('--test-archive', dest='ta', action='store_true',
+                          help='test the archive')
+        parser.add_option('--test-loop', dest='tl', action='store_true',
+                          help='test the loop')
+        parser.add_option('--test-current', dest='tc', action='store_true',
+                          help='test single current call')
         (options, args) = parser.parse_args()
 
-        if options.td:
-            test_driver()
-
-
-    def test_driver():
-        import weeutil.weeutil
+        if options.ta:
+            test_archive()
+        if options.tl:
+            test_loop()
+        if options.tc:
+            test_current()
+            
+            
+    def get_driver():
         import os
-        good_stamp = WLDCDriverAPI.timestamp(datetime.now() - timedelta(minutes=30))
         params = {'hostname': 'dummy',
                   'wl_apikey': os.getenv('WL_API_KEY'),
                   'wl_apisecret': os.getenv('WL_API_SECRET'),
                   'wl_stationid': os.getenv('WL_STATION_ID'),
                   'wl_archive_enable': 1,
                   'wl_archive_interval': 1}
-        driver = WLDCDriver(**params)
-        # for pkt in driver.genLoopPackets():
+        return WLDCDriver(**params)
+        
+
+    def test_archive():
+        import weeutil.weeutil
+        driver = get_driver()
+        good_stamp = WLDCDriverAPI.timestamp(datetime.now() - timedelta(minutes=30))
         for pkt in driver.genStartupRecords(good_stamp):
             print((weeutil.weeutil.timestamp_to_string(pkt['dateTime']), pkt))
 
+    def test_loop():
+        import weeutil.weeutil
+        driver = get_driver()
+        for pkt in driver.genLoopPackets():
+            print((weeutil.weeutil.timestamp_to_string(pkt['dateTime']), pkt))
+            
+    def test_current():
+        import weeutil.weeutil
+        driver = get_driver()
+        api = driver.WLDCDriverAPI
+        url_apiv2_wl = api.WLAPIv2('current')
+        for data_wl in api.request_http_data(url_apiv2_wl, api.api_parameters['time_out'], 'Weatherlink.com'):
+            print('ITEM')
+            print(data_wl)
+            print(data_wl.keys())
+            print(data_wl['sensors'][0])
+            print([[x.get('ts') for x in d['data']] for d in data_wl['sensors']])
+            print(api.timestamp(datetime.now()))
 
     main()

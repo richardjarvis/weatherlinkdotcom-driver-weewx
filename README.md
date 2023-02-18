@@ -1,7 +1,9 @@
 WLDCDriver
 ============
-Driver to make requests to weatherlink.com, both for archive and for loop data
+Driver to make requests to weatherlink.com, both for archive and for loop data.
+
 Designed to work with both Python 2.7 and Python 3
+
 ## Installation
 
 
