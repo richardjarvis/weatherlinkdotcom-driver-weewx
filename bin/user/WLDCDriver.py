@@ -836,45 +836,12 @@ class WLDCDriver(weewx.drivers.AbstractDevice):
         # Make loop packet specify by user by poll interval
         while self.ntries < self.api_parameters['max_tries']:
             try:
-                for _packet_wll in self.WLDCDriverAPI.request_wl_current():
-                    yield _packet_wll
+                for _packet_wl in self.WLDCDriverAPI.request_wl_current():
+                    yield _packet_wl
                     self.ntries = 1
 
                 if self.api_parameters['poll_interval']:
                     time.sleep(self.api_parameters['poll_interval'])
-
-            except weewx.WeeWxIOError as e:
-                logerr("Failed attempt %d of %d to get loop data in genLoopPackets: %s" %
-                       (self.ntries, self.api_parameters['max_tries'], e))
-                self.ntries += 1
-                time.sleep(self.api_parameters['retry_wait'])
-        else:
-            msg = "Max retries (%d) exceeded for LOOP data" % self.api_parameters['max_tries']
-            logerr(msg)
-            raise weewx.RetriesExceeded(msg)
-
-
-    def genLoopPacketsOld(self):
-
-        # Make loop packet specify by user by poll interval
-        while self.ntries < self.api_parameters['max_tries']:
-            try:
-                for _packet_wll in self.WLDCDriverAPI.request_wll('current_conditions'):
-                    yield _packet_wll
-                    self.ntries = 1
-
-                if self.api_parameters['realtime_enable'] == 0:
-                    if self.api_parameters['poll_interval']:
-                        time.sleep(self.api_parameters['poll_interval'])
-
-                if self.api_parameters['realtime_enable'] == 1:
-                    timeout_udp_broadcast = time.time() + self.api_parameters['poll_interval']
-
-                    self.WLDCDriverAPI.request_wll_realtime()
-
-                    while time.time() < timeout_udp_broadcast:
-                        for _realtime_packet in self.WLDCDriverAPI.request_wll('realtime_broadcast'):
-                            yield _realtime_packet
 
             except weewx.WeeWxIOError as e:
                 logerr("Failed attempt %d of %d to get loop data in genLoopPackets: %s" %
