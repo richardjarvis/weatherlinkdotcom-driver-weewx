@@ -31,7 +31,6 @@ try:
 
     log = logging.getLogger(__name__)
 
-
     def logdbg(msg):
         log.debug(msg)
 
@@ -796,6 +795,9 @@ class WLDCDriver(weewx.drivers.AbstractDevice):
 
         # Define WLDCDriverAPI
         self.WLDCDriverAPI = WLDCDriverAPI(self.api_parameters)
+        
+        # Initialize loop throttle
+        self.loopLast = None
 
         # Show description at startup of Weewx
         loginf("Driver name is %s" % DRIVER_NAME)
@@ -837,6 +839,11 @@ class WLDCDriver(weewx.drivers.AbstractDevice):
         while self.ntries < self.api_parameters['max_tries']:
             try:
                 for _packet_wl in self.WLDCDriverAPI.request_wl_current():
+                    if self.api_parameters['poll_interval']:
+                        if self.loopLast:
+                            while (datetime.now() - self.loopLast).total_seconds() < self.api_parameters['poll_interval']:
+                                time.sleep(1)
+                        self.loopLast = datetime.now()
                     yield _packet_wl
                     self.ntries = 1
 
@@ -864,7 +871,6 @@ class WLDCDriver(weewx.drivers.AbstractDevice):
 
 if __name__ == "__main__":
     usage = """%prog [options] [--help]"""
-
 
     def main():
         try:
