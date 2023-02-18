@@ -2,19 +2,19 @@ from setup import ExtensionInstaller
 
 
 def loader():
-    return WLLDriverInstaller()
+    return WLDCDriverInstaller()
 
 
-class WLLDriverInstaller(ExtensionInstaller):
+class WLDCDriverInstaller(ExtensionInstaller):
     def __init__(self):
-        super(WLLDriverInstaller, self).__init__(
-            version='0.4',
-            name='WLLDriver',
-            description='Request data to WLL and lost data from Weatherlink.com',
-            author="Drealine",
+        super(WLDCDriverInstaller, self).__init__(
+            version='0.1',
+            name='WLDCDriver',
+            description='Request both archive and live data from Weatherlink.com',
+            author="richardjarvis",
             config={
-                'WLLDriver': {
-                    'driver': 'user.WLLDriver',
+                'WLDCDriver': {
+                    'driver': 'user.WLDCDriver',
                     'max_tries': 10,
                     'retry_wait': 5,
                     'poll_interval': 10,
@@ -31,6 +31,6 @@ class WLLDriverInstaller(ExtensionInstaller):
                 },
             },
 
-            files=[('bin/user', ['bin/user/WLLDriver.py'])]
+            files=[('bin/user', ['bin/user/WLDCDriver.py'])]
 
         )

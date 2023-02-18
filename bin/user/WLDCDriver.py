@@ -1,7 +1,6 @@
-#!/usr/bin/python3
 
-DRIVER_NAME = "WLLDriver"
-DRIVER_VERSION = "2020.12-1"
+DRIVER_NAME = "WLDCDriver"
+DRIVER_VERSION = "2023.02-1"
 
 import json
 import requests
@@ -49,7 +48,7 @@ except ImportError:
 
 
     def logmsg(level, msg):
-        syslog.syslog(level, 'WLLDriver: %s:' % msg)
+        syslog.syslog(level, 'WLDCDriver: %s:' % msg)
 
 
     def logdbg(msg):
@@ -64,7 +63,7 @@ except ImportError:
         logmsg(syslog.LOG_ERR, msg)
 
 
-class WLLDriverAPI():
+class WLDCDriverAPI():
 
     def __init__(self, api_parameters):
 
@@ -103,6 +102,13 @@ class WLLDriverAPI():
 
     # Functions for some specifics demands : ---------------------------------------------------------------------------
     @staticmethod
+    def timestamp(dt):
+        # TODO: will fail if dt is not naive - and also may be wrong during BST
+        seconds = (dt - datetime(1970, 1, 1)).total_seconds()
+        return seconds
+        
+        
+    @staticmethod
     def round_minutes(timestamp, direction, resolution):
 
         # Function to get last time specify by up or down resolution
@@ -111,7 +117,7 @@ class WLLDriverAPI():
         new_minute = (dt.minute // resolution + (1 if direction == 'up' else 0)) * resolution
         result = dt + timedelta(minutes=new_minute - dt.minute)
 
-        return int(datetime.timestamp(result))
+        return int(WLDCDriverAPI.timestamp(result))
 
     @staticmethod
     def get_last_midnight(dt):
@@ -119,7 +125,7 @@ class WLLDriverAPI():
         if dt is not None:
             dt_timestamp = datetime.fromtimestamp(dt)
             midnight = datetime.combine(dt_timestamp.today(), dt_timestamp.min.time())
-            next_midnight = datetime.timestamp(midnight + timedelta(days=1))
+            next_midnight = WLDCDriverAPI.timestamp(midnight + timedelta(days=1))
             return next_midnight
 
     def set_time_health_api(self):
@@ -622,7 +628,7 @@ class WLLDriverAPI():
                 if rainFall_Daily is not None:
                     if rainFall_Daily >= 0:
                         self.rain_previous_period = rainFall_Daily
-                        logdbg("rainFall_Daily set by WLLDriver : {}".format(self.rain_previous_period))
+                        logdbg("rainFall_Daily set by WLDCDriver : {}".format(self.rain_previous_period))
 
             # Get rain and rainRate
             logdbg("rainFall_Daily set : {}".format(rainFall_Daily))
@@ -668,20 +674,21 @@ class WLLDriverAPI():
 
 def loader(config_dict, engine):
     # Define the driver
+    d = config_dict[DRIVER_NAME].copy()
+    d.update(config_dict)
+    return WLDCDriver(**d)
 
-    return WLLDriver(**config_dict[DRIVER_NAME], **config_dict)
 
-
-class WLLDriver(weewx.drivers.AbstractDevice):
+class WLDCDriver(weewx.drivers.AbstractDevice):
 
     def __init__(self, **stn_dict):
 
         # Define description of driver
         self.vendor = "Davis"
         self.product = "WeatherLinkLive"
-        self.model = "WLLDriver"
+        self.model = "WLDCDriver"
 
-        # Setting require parameters to start WLLDriver
+        # Setting require parameters to start WLDCDriver
         self.api_parameters = {'max_tries': int(stn_dict.get('max_tries', 5)),
                                'time_out': int(stn_dict.get('time_out', 10)),
                                'retry_wait': int(stn_dict.get('retry_wait', 10)),
@@ -737,8 +744,8 @@ class WLLDriver(weewx.drivers.AbstractDevice):
         # Define number of try to 1
         self.ntries = 1
 
-        # Define WLLDriverAPI
-        self.WLLDriverAPI = WLLDriverAPI(self.api_parameters)
+        # Define WLDCDriverAPI
+        self.WLDCDriverAPI = WLDCDriverAPI(self.api_parameters)
 
         # Show description at startup of Weewx
         loginf("Driver name is %s" % DRIVER_NAME)
@@ -757,11 +764,11 @@ class WLLDriver(weewx.drivers.AbstractDevice):
         if 'wl_archive_enable' in self.api_parameters and self.api_parameters['wl_archive_enable'] == 1:
             # Generate values since good stamp in Weewx database
             try:
-                now_timestamp_wl = self.WLLDriverAPI.round_minutes(time.time(), 'down',
+                now_timestamp_wl = self.WLDCDriverAPI.round_minutes(time.time(), 'down',
                                                                    self.api_parameters['wl_archive_interval'])
                 # Add 60 seconds timestamp to wait the WLL archive new data
                 if good_stamp is not None and (good_stamp + 60 < now_timestamp_wl):
-                    for _packet_wl in self.WLLDriverAPI.request_wl(good_stamp, now_timestamp_wl):
+                    for _packet_wl in self.WLDCDriverAPI.request_wl(good_stamp, now_timestamp_wl):
                         yield _packet_wl
                         good_stamp = time.time() + 0.5
                         self.ntries = 1
@@ -778,7 +785,7 @@ class WLLDriver(weewx.drivers.AbstractDevice):
         # Make loop packet specify by user by poll interval
         while self.ntries < self.api_parameters['max_tries']:
             try:
-                for _packet_wll in self.WLLDriverAPI.request_wll('current_conditions'):
+                for _packet_wll in self.WLDCDriverAPI.request_wll('current_conditions'):
                     yield _packet_wll
                     self.ntries = 1
 
@@ -789,10 +796,10 @@ class WLLDriver(weewx.drivers.AbstractDevice):
                 if self.api_parameters['realtime_enable'] == 1:
                     timeout_udp_broadcast = time.time() + self.api_parameters['poll_interval']
 
-                    self.WLLDriverAPI.request_wll_realtime()
+                    self.WLDCDriverAPI.request_wll_realtime()
 
                     while time.time() < timeout_udp_broadcast:
-                        for _realtime_packet in self.WLLDriverAPI.request_wll('realtime_broadcast'):
+                        for _realtime_packet in self.WLDCDriverAPI.request_wll('realtime_broadcast'):
                             yield _realtime_packet
 
             except weewx.WeeWxIOError as e:
@@ -810,7 +817,7 @@ class WLLDriver(weewx.drivers.AbstractDevice):
 # Main program
 #
 # To test this driver, do the following:
-#   PYTHONPATH="Path of your 'bin' folder specific of your Weewx installation" python3 /home/weewx/bin/user/WLLDriver.py
+#   PYTHONPATH="Path of your 'bin' folder specific of your Weewx installation" python3 /home/weewx/bin/user/WLDCDriver.py
 #
 # ==============================================================================
 
@@ -823,10 +830,10 @@ if __name__ == "__main__":
             import logging
             import weeutil.logger
             log = logging.getLogger(__name__)
-            weeutil.logger.setup('WLLDriver', {})
+            weeutil.logger.setup('WLDCDriver', {})
         except ImportError:
             import syslog
-            syslog.openlog('WLLDriver', syslog.LOG_PID | syslog.LOG_CONS)
+            syslog.openlog('WLDCDriver', syslog.LOG_PID | syslog.LOG_CONS)
 
         import optparse
         parser = optparse.OptionParser(usage=usage)
@@ -840,8 +847,17 @@ if __name__ == "__main__":
 
     def test_driver():
         import weeutil.weeutil
-        driver = WLLDriver()
-        for pkt in driver.genLoopPackets():
+        import os
+        good_stamp = WLDCDriverAPI.timestamp(datetime.now() - timedelta(minutes=30))
+        params = {'hostname': 'dummy',
+                  'wl_apikey': os.getenv('WL_API_KEY'),
+                  'wl_apisecret': os.getenv('WL_API_SECRET'),
+                  'wl_stationid': os.getenv('WL_STATION_ID'),
+                  'wl_archive_enable': 1,
+                  'wl_archive_interval': 1}
+        driver = WLDCDriver(**params)
+        # for pkt in driver.genLoopPackets():
+        for pkt in driver.genStartupRecords(good_stamp):
             print((weeutil.weeutil.timestamp_to_string(pkt['dateTime']), pkt))
 
 

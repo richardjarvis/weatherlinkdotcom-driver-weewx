@@ -1,13 +1,14 @@
-WLLDriver
+WLDCDriver
 ============
-Driver to make request to WeatherLinkLive module including archive from Weatherlink.com when data be lost on Weewx.
-Work only with Python3 and higher.
+Driver to make requests to weatherlink.com, both for archive and for loop data
+Designed to work with both Python 2.7 and Python 3
 ## Installation
 
-- Download the latest release of WLLDriver : https://github.com/Drealine/weatherlinklive-driver-weewx/releases
-- Install the driver : ```wee_extension --install WLLDriver.zip```
-- Install require libs Python : ```pip3 install requests```
-- Find on **weewx.conf** ```station_type``` and change by this : ```station_type = WLLDriver```
+
+- Download the latest release of wldc : https://github.com/richardjarvis/weatherlinkdotcom-driver-weewx/releases
+- Install the driver : ```wee_extension --install wldc.zip```
+- Install require libs Python : ```pip install requests```
+- Find on **weewx.conf** ```station_type``` and change by this : ```station_type = wldc```
 - If you want to retrieve new data when the driver fail, set ```loop_on_init = True``` on **weewx.conf**
 - Restart weewx : ```service weewx restart```
 
@@ -64,30 +65,7 @@ Enable the feature ```wl_archive_enable = 1``` and set parameters on **weewx.con
 - ```wl_apikey``` - Create an API Key on your Weatherlink account.
 - ```wl_apisecret``` - By creating API Key, you've also need an API Secret.
 - ```wl_stationid``` - Check your station ID by using the method explain before.
-- ```wl_archive_interval``` - Be carefull by set this because it depending on your subscription on Weatherlink.com. For better use, please set the same archive interval than the Weewx engine.
-
-### Add extra sensor or deported sensor
-
-WLLDriver support at the moment only 5 extraTemp, 5 extraHumid or 1 Wind deported.
-
-Correct syntax is ```device:id_of_device``` where :
-
-- ```device``` is the **sensor**
-- ```id_of_device``` is the **id** that you've set when you configure the sensor with the WLL module
-
-| Sensor        | Type |
-| ------|-----|
-| **iss** | Set the ISS |
-| **extraTempX** | Set an extra temperature sensor with X is the number |
-| **extraHumidX** | Set an extra humidity sensor with X is the number |
-| **extraAnemometer** | Set a deported anemometer if it's not connected to the ISS |
-
-**/!\ ISS and ID must be put first on ```device_id```.**<br/>
-**/!\ When adding sensors, make sur that schema is correct on Weewx. If not, please add a schema by following this tutorial : https://github.com/poblabs/weewx-belchertown/wiki/Adding-a-new-observation-type-to-the-WeeWX-database**
-
-If you want to enable for example an extra temp sensor, set like this : ```device_id = iss:1-extraTemp1:2```<br/>
-You can ajust and add more extra sensors like this : ```device_id = iss:1-extraTemp1:2-extraTemp2:4-extraHumid1:7```<br/>
-Each parameter is separated by **```-```**
+- ```wl_archive_interval``` - Be careful when settings this because it depending on your subscription on Weatherlink.com. For better use, please set the same archive interval than the Weewx engine.
 
 ### Wind gust 2min
 
@@ -127,5 +105,9 @@ WLLDriver recuperate value for health ISS and WLL module each 15 minutes on Weat
 | **wl_archive_interval** | User need to set manually | 1, 5 or 15 |
 | **wind_gust_2min_enable** | Not set so, 0 | 0 = Disable / 1 = Enable |
 | **port** | 80 | 1/65535 |
+
+## Credits
+
+The starting point for this was a fork of Drealine/weatherlinklive-driver-weewx. Many thanks.
 
 
